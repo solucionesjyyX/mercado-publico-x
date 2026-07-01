@@ -1,0 +1,59 @@
+name: Descarga Compra Agil diaria
+
+on:
+  schedule:
+    - cron: '0 12 * * *'
+  workflow_dispatch:
+    inputs:
+      date_from:
+        description: 'Fecha desde (YYYY-MM-DD)'
+        required: false
+        default: ''
+      date_to:
+        description: 'Fecha hasta (YYYY-MM-DD)'
+        required: false
+        default: ''
+      max_budget:
+        description: 'Presupuesto máximo'
+        required: false
+        default: '7500000'
+
+jobs:
+  descarga:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Calcular fechas
+        id: fechas
+        run: |
+          DESDE="${{ github.event.inputs.date_from }}"
+          HASTA="${{ github.event.inputs.date_to }}"
+          if [ -z "$DESDE" ]; then DESDE=$(date +%F); fi
+          if [ -z "$HASTA" ]; then HASTA=$(date -d '+3 months' +%F); fi
+          echo "desde=$DESDE" >> $GITHUB_OUTPUT
+          echo "hasta=$HASTA" >> $GITHUB_OUTPUT
+
+      - name: Pedir link de descarga a la API
+        run: |
+          RESPONSE=$(curl -s "https://api.buscador.mercadopublico.cl/compra-agil?action=download-excel&max_budget=${{ github.event.inputs.max_budget || 7500000 }}&min_budget=1&date_from=${{ steps.fechas.outputs.desde }}&date_to=${{ steps.fechas.outputs.hasta }}&order_by=closing_soon&status=2" \
+            -H "accept: application/json, text/plain, */*" \
+            -H "origin: https://buscador.mercadopublico.cl" \
+            -H "referer: https://buscador.mercadopublico.cl/" \
+            -H "x-api-key: e93089e4-437c-4723-b343-4fa20045e3bc")
+          echo "$RESPONSE" > respuesta.json
+          cat respuesta.json
+
+      - name: Extraer URL del excel y descargarlo
+        run: |
+          URL=$(cat respuesta.json | grep -oE 'https://[^"]+\.xlsx[^"]*')
+          echo "URL encontrada: $URL"
+          curl -s -o compra_agil.xlsx "$URL"
+
+      - name: Commit y push
+        run: |
+          git config user.name "bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add compra_agil.xlsx
+          git commit -m "Actualización $(date +%F) rango ${{ steps.fechas.outputs.desde }} a ${{ steps.fechas.outputs.hasta }}" || echo "sin cambios"
+          git push
